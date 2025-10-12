@@ -26,7 +26,7 @@ Each folder contains training, evaluation, and inference scripts for that archit
 
 
 Dataset image examples:  
-![Example dermatoscopic images]<img width="721" height="369" alt="image" src="https://github.com/user-attachments/assets/58a4de29-d126-4124-90ab-0c7b5410baaa" />
+<img width="721" height="369" alt="image" src="https://github.com/user-attachments/assets/58a4de29-d126-4124-90ab-0c7b5410baaa" />
 
 Grad-CAM comparison:  
 <img width="1152" height="765" alt="image" src="https://github.com/user-attachments/assets/891a51e9-6eda-4433-b02b-7272c1d24294" />
