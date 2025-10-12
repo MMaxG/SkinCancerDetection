@@ -67,5 +67,3 @@ Full plots, confusion matrices and Grad-CAM images are available in `results/`.
 
 ---
 
-## repo structure
-
