@@ -24,10 +24,9 @@ Each folder contains training, evaluation, and inference scripts for that archit
 
 ## Quick demo / visuals
 
-> Replace the image paths below with your actual files (e.g. `images/ham_ex1.jpg`, `results/gradcam_resnet.png`).
 
 Dataset image examples:  
-<img width="721" height="369" alt="image" src="https://github.com/user-attachments/assets/58a4de29-d126-4124-90ab-0c7b5410baaa" />
+![Example dermatoscopic images]<img width="721" height="369" alt="image" src="https://github.com/user-attachments/assets/58a4de29-d126-4124-90ab-0c7b5410baaa" />
 
 Grad-CAM comparison:  
 <img width="1152" height="765" alt="image" src="https://github.com/user-attachments/assets/891a51e9-6eda-4433-b02b-7272c1d24294" />
