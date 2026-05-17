@@ -11,7 +11,7 @@
 
 This repository contains the code and results for my Master's Thesis comparing deep learning models for **binary classification** of dermatoscopic images: **melanoma vs. benign nevus** (mole). The work is based on experiments using the **HAM10000** dataset and includes Grad-CAM visualizations for explainability.
 
-Four model forks (separate folders in this repo) are included:
+Four model forks (separate branches in this repo) are included:
 
 - `ResNet50/`  
 - `EfficientNet-B4/`  
