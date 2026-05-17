@@ -3,20 +3,13 @@ import zipfile
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
-import os
-os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'  # Suppress INFO and WARNING (but not ERROR)
 import tensorflow as tf
-
-tf.compat.v1.logging.set_verbosity(tf.compat.v1.logging.ERROR)
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import classification_report, roc_auc_score, confusion_matrix
 import seaborn as sns
 import shutil
-
-print("Num GPUs Available: ", len(tf.config.list_physical_devices('GPU')))
-
-import tensorflow as tf
-print(tf.__version__)
+from keras import layers, models
+from tfswin import SwinTransformerTiny224
 
 # === 1. DOWNLOAD HAM10000 DATASET FROM KAGGLE ===
 print("\nChecking for dataset...")
@@ -50,7 +43,7 @@ df['image_path'] = image_dir + "/" + df['image_id'] + ".jpg"
 
 # Balance: sample 1000 of each class
 # 1113 melanoma images and 6705 nevus
-rng=77 # change for different random samples
+rng = 69
 mel_df = df[df['label'] == 'melanoma'].sample(n=1000, random_state=rng, replace=False) # replace=True for overfitting (if need more images than exist)
 nv_df = df[df['label'] == 'nevus'].sample(n=1000, random_state=rng)
 df_balanced = pd.concat([mel_df, nv_df]).sample(frac=1, random_state=rng)
@@ -144,43 +137,41 @@ val_ds = val_ds.cache().prefetch(buffer_size=AUTOTUNE)
 test_ds = test_ds.cache().prefetch(buffer_size=AUTOTUNE) # Cache & prefetch val/test
 
 # === 7. BUILD MODEL ===
-from keras.applications import ConvNeXtTiny
-from keras.applications.convnext import LayerScale  # This is the missing piece
-MODEL_PATH = "convnexttiny_skin_cancer.keras"
+MODEL_PATH = "SwinTransfomer_skin_cancer.keras"
 skip_training = False;
 if os.path.exists(MODEL_PATH):
     print("Loading existing model and skipping training...")
     skip_training = True
-    #model = tf.keras.models.load_model(MODEL_PATH)
-    model = tf.keras.models.load_model(MODEL_PATH, custom_objects={"LayerScale": LayerScale})
+    model = tf.keras.models.load_model(MODEL_PATH)
 
 else:
     # Load the base ResNet50 model without the top layer
     # https://keras.io/api/applications/
-    base_model = tf.keras.applications.EfficientNetB4(weights='imagenet', include_top=False, input_shape=(IMG_HEIGHT, IMG_WIDTH, 3))
+    base_model = SwinTransformerTiny224(include_top=False, input_shape=(IMG_HEIGHT, IMG_WIDTH, 3))
     base_model.trainable = False  # Freeze base model initially
 
     print(f"No model found. Building {base_model.name} model...")
 
     # Define the input and preprocessing pipeline
-    inputs = tf.keras.Input(shape=(IMG_HEIGHT, IMG_WIDTH, 3))
+    inputs = tf.keras.Input(shape=(IMG_HEIGHT, IMG_WIDTH, 3), dtype='uint8')
     x = data_augmentation(inputs, training=True)
-    #x = tf.keras.applications.resnet50.preprocess_input(x) # For ConvNeXt, preprocessing is included in the model using a Normalization layer
+    x = tf.keras.applications.imagenet_utils.preprocess_input(x, mode='torch')
+
 
     # Pass through base model and add custom classifier
     x = base_model(x, training=False)
     x = tf.keras.layers.GlobalAveragePooling2D()(x)
-    x = tf.keras.layers.Dropout(0.5)(x)
-    x = tf.keras.layers.Dense(128, activation='relu')(x)
-    x = tf.keras.layers.Dropout(0.3)(x)
+    #x = tf.keras.layers.Dropout(0.5)(x)
+    #x = tf.keras.layers.Dense(128, activation='relu')(x)
+    #x = tf.keras.layers.Dropout(0.3)(x)
     outputs = tf.keras.layers.Dense(2, activation='softmax')(x)
 
     # Create the full model
     model = tf.keras.Model(inputs=inputs, outputs=outputs)
-    model.summary()
+
     # === WARM-UP PHASE ===
     print("Starting warm-up training...")
-    model.compile(optimizer=tf.keras.optimizers.Adam(learning_rate=1e-4),
+    model.compile(optimizer=tf.keras.optimizers.AdamW(learning_rate=1e-4, weight_decay=1e-4),
                 loss=tf.keras.losses.CategoricalCrossentropy(label_smoothing=0.1),
                 metrics=['accuracy', tf.keras.metrics.AUC(name='auc')])
 
@@ -194,7 +185,7 @@ else:
     for layer in base_model.layers[-25:]:
         layer.trainable = True
 
-    model.compile(optimizer=tf.keras.optimizers.Adam(learning_rate=1e-5),
+    model.compile(optimizer=tf.keras.optimizers.AdamW(learning_rate=1e-5, weight_decay=1e-4,),
                 loss=tf.keras.losses.CategoricalCrossentropy(label_smoothing=0.1),
                 metrics=['accuracy', tf.keras.metrics.AUC(name='auc')])
 
@@ -212,7 +203,7 @@ else:
 
     combined_history = combine_histories(history_warmup, history_finetune)
 
-    def plot_training_curves(history_dict, model_name="efficientnetb4"):
+    def plot_training_curves(history_dict, model_name="Swin Transformer"):
         acc = history_dict['accuracy']
         val_acc = history_dict['val_accuracy']
         loss = history_dict['loss']
@@ -243,13 +234,15 @@ else:
         plt.savefig(f"{model_name.lower()}_training_curves.png", dpi=300)
         plt.show()
 
+model.summary()
+
 # === 8. TRAIN MODEL WITH AUC-BASED SAVING ===
 if not skip_training:
     print("Training model...")
 
     checkpoint_cb = tf.keras.callbacks.ModelCheckpoint(
         filepath=MODEL_PATH,
-        monitor='val_accuracy',
+        monitor='val_auc',
         mode='max',
         save_best_only=True,
         save_weights_only=False,
@@ -258,7 +251,7 @@ if not skip_training:
 
     early_stop = tf.keras.callbacks.EarlyStopping(patience=5, monitor='loss', restore_best_weights=True)
 
-    model.compile(optimizer=tf.keras.optimizers.Adam(learning_rate=1e-5),
+    model.compile(optimizer=tf.keras.optimizers.AdamW(learning_rate=1e-5, weight_decay=1e-4,),
                   loss=tf.keras.losses.CategoricalCrossentropy(label_smoothing=0.1),
                   metrics=['accuracy', tf.keras.metrics.AUC(name='auc')])
 
@@ -269,8 +262,8 @@ if not skip_training:
 
     combined_history = combine_histories(combined_history, history_final)
 
-    plot_training_curves(combined_history, model_name="efficientnetb4")
-    
+    plot_training_curves(combined_history, model_name="Swin Transformer")
+
 # === 9. EVALUATE ===
 
 print("Evaluating model on test set...")
@@ -288,54 +281,14 @@ sns.heatmap(cm, annot=True, fmt='d', xticklabels=["melanoma", "nevus"], yticklab
 plt.xlabel("Predicted"); plt.ylabel("Actual"); plt.title("Confusion Matrix")
 plt.show()
 
-# === 11. GRAD-CAM VISUALIZATION ===
+# === 11. VISUALIZATION ===
 import cv2
 import matplotlib.pyplot as plt
 
-# Extract the base model from your full model
-resnet_model = model.get_layer("convnext_tiny")
-
-# Define classifier head (everything after base model)
-x = resnet_model.output
-for layer in model.layers[model.layers.index(resnet_model)+1:]:
-    x = layer(x)
-classifier_model = tf.keras.Model(inputs=resnet_model.output, outputs=x)
-
-# Find the last Conv2D layer inside the model base
-def get_last_conv_layer(model):
-    for layer in reversed(model.layers):
-        if isinstance(layer, tf.keras.layers.Conv2D):
-            return layer
-    raise ValueError("No Conv2D layer found.")
-
-last_conv_layer = get_last_conv_layer(resnet_model)
-
-# Grad-CAM heatmap generator
-def make_gradcam_heatmap(img_array, base_model, classifier_model, last_conv_layer):
-    grad_model = tf.keras.models.Model(
-        inputs=base_model.input,
-        outputs=[last_conv_layer.output, base_model.output]
-    )
-
-    with tf.GradientTape() as tape:
-        conv_outputs, base_output = grad_model(img_array)
-        tape.watch(conv_outputs)
-        preds = classifier_model(base_output)
-        pred_index = tf.argmax(preds[0])
-        class_output = preds[:, pred_index]
-
-    grads = tape.gradient(class_output, conv_outputs)
-    pooled_grads = tf.reduce_mean(grads, axis=(0, 1, 2))
-    conv_outputs = conv_outputs[0]
-    heatmap = conv_outputs @ pooled_grads[..., tf.newaxis]
-    heatmap = tf.squeeze(heatmap)
-    heatmap = tf.maximum(heatmap, 0) / tf.reduce_max(heatmap)
-    return heatmap.numpy()
-
-# Map label index to string
+# Class names for display
 class_names = ["melanoma", "nevus"]
 
-# Pick random samples from test set
+# Pick 3 random images from the test DataFrame
 sample_images = list(test_df.sample(3).itertuples())
 
 for sample in sample_images:
@@ -346,28 +299,21 @@ for sample in sample_images:
     img = tf.keras.utils.load_img(image_path, target_size=(IMG_HEIGHT, IMG_WIDTH))
     img_array = tf.keras.utils.img_to_array(img)
     img_array = tf.expand_dims(img_array, axis=0)
-    img_array = tf.keras.applications.resnet50.preprocess_input(img_array)
-
+    img_array = tf.keras.applications.imagenet_utils.preprocess_input(img_array, mode='torch')
 
     # Make prediction
     preds = model.predict(img_array)
     pred_class = np.argmax(preds[0])
     pred_label = class_names[pred_class]
+    confidence = preds[0][pred_class]
 
-    # Generate Grad-CAM heatmap
-    heatmap = make_gradcam_heatmap(img_array, resnet_model, classifier_model, last_conv_layer)
-
-    # Superimpose heatmap
+    # Display image with prediction info
     img_cv = cv2.imread(image_path)
     img_cv = cv2.resize(img_cv, (IMG_HEIGHT, IMG_WIDTH))
-    heatmap_resized = cv2.resize(heatmap, (img_cv.shape[1], img_cv.shape[0]))
-    heatmap_colored = cv2.applyColorMap(np.uint8(255 * heatmap_resized), cv2.COLORMAP_JET)
-    superimposed_img = cv2.addWeighted(img_cv, 0.75, heatmap_colored, 0.25, 0)
 
-    # Display
     plt.figure(figsize=(6, 6))
-    plt.imshow(cv2.cvtColor(superimposed_img, cv2.COLOR_BGR2RGB))
-    plt.title(f"True: {label} | Pred: {pred_label} ({preds[0][pred_class]:.2f})")
+    plt.imshow(cv2.cvtColor(img_cv, cv2.COLOR_BGR2RGB))
+    plt.title(f"True: {label} | Predicted: {pred_label} ({confidence:.2f})")
     plt.axis('off')
     plt.tight_layout()
     plt.show()
